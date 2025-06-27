@@ -25,9 +25,14 @@ if len(argv) < 3:
 db = DB()
 print("Opening A2l as database")
 
-session = (
-    db.open_existing(argv[1]) if path.exists(f"{argv[1]}db") else db.import_a2l(argv[1])
-)
+# Check if database exists, if so open it, otherwise try to import A2L file
+if path.exists(f"{argv[1]}.a2ldb"):
+    session = db.open_existing(argv[1])
+elif path.exists(f"{argv[1]}.a2l"):
+    session = db.import_a2l(argv[1])
+else:
+    print(f"Error: Neither {argv[1]}.a2ldb nor {argv[1]}.a2l found")
+    sys.exit(1)
 
 print("A2l Opened as database")
 
@@ -109,10 +114,16 @@ def process_measurement(session, param_name, custom_name=""):
     # Access measurement properties directly
     try:
         # Get computation method for unit and coefficients
-        compu_method = measurement.compuMethod
+        compu_method = getattr(measurement, 'compuMethod', None)
+        if compu_method is None:
+            compu_method = getattr(measurement, 'conversion', None)
+        
         if compu_method and hasattr(compu_method, 'coeffs'):
             math = coefficients_to_equation(compu_method.coeffs)
-            unit = compu_method.unit if hasattr(compu_method, 'unit') else ""
+            unit = getattr(compu_method, 'unit', "")
+        elif compu_method and hasattr(compu_method, 'coefficients'):
+            math = coefficients_to_equation(compu_method.coefficients)
+            unit = getattr(compu_method, 'unit', "")
         else:
             math = "No conversion available"
             unit = ""
