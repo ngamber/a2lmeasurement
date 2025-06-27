@@ -20,11 +20,11 @@ def print_usage():
     print("  --addr            Look up measurements by ECU address (hex format: 0x1234ABCD)")
     print("")
     print("Examples:")
-    print("  python a2lmeasurement.py engine.a2l --csv measurements.csv")
-    print("  python a2lmeasurement.py engine.a2l RPM MAP:ManifoldPressure LAMBDA")
-    print("  python a2lmeasurement.py engine.a2l n_tcha:TurboSpeed --debug")
-    print("  python a2lmeasurement.py engine.a2l --addr 0xb00095fc:TurboSpeed")
-    print("  python a2lmeasurement.py engine.a2l --addr 0x12345678 0xABCDEF00:CustomName")
+    print("  python a2lmeasurement.py SCGA05_OEM.a2l --csv measurements.csv")
+    print("  python a2lmeasurement.py SCGA05_OEM.a2l n_tcha Air_tIn_VW:IntakeTemp")
+    print("  python a2lmeasurement.py SCGA05_OEM.a2l n_tcha:TurboSpeed --debug")
+    print("  python a2lmeasurement.py SCGA05_OEM.a2l --addr 0xb00095fc:TurboSpeed")
+    print("  python a2lmeasurement.py SCGA05_OEM.a2l tps gear Air_tCacDs_VW:ChargeAirTemp")
 
 if len(argv) < 3:
     print_usage()
@@ -36,10 +36,10 @@ print("Opening A2l as database")
 # Check if database exists, if so open it, otherwise try to import A2L file
 if path.exists(f"{argv[1]}.a2ldb"):
     session = db.open_existing(argv[1])
-elif path.exists(f"{argv[1]}.a2l"):
+elif path.exists(argv[1]):
     session = db.import_a2l(argv[1])
 else:
-    print(f"Error: Neither {argv[1]}.a2ldb nor {argv[1]}.a2l found")
+    print(f"Error: Neither {argv[1]}.a2ldb nor {argv[1]} found")
     sys.exit(1)
 
 print("A2l Opened as database")
@@ -388,43 +388,12 @@ def find_measurement_by_address(session, target_address, debug=False):
 def generate_human_readable_name(param_name):
     """Convert technical parameter names to human-readable names"""
     # Common automotive parameter name mappings
+    # Only includes parameters that actually exist in the example A2L file
     name_mappings = {
         'n_tcha': 'TurboSpeed',
-        'n_mot': 'EngineRPM',
-        'n_eng': 'EngineRPM',
-        'rpm': 'EngineRPM',
-        'p_map': 'ManifoldPressure',
-        'p_boost': 'BoostPressure',
-        'p_rail': 'FuelRailPressure',
-        't_air': 'IntakeAirTemp',
-        't_cool': 'CoolantTemp',
-        't_oil': 'OilTemp',
-        't_exh': 'ExhaustTemp',
-        'lambda': 'AirFuelRatio',
-        'afr': 'AirFuelRatio',
-        'maf': 'MassAirFlow',
-        'map': 'ManifoldPressure',
+        'n': 'EngineRPM',
         'tps': 'ThrottlePosition',
-        'ign_adv': 'IgnitionAdvance',
-        'timing': 'IgnitionTiming',
-        'inj_time': 'InjectorPulseWidth',
-        'fuel_flow': 'FuelFlow',
-        'boost': 'BoostPressure',
-        'vvt': 'VariableValveTiming',
-        'knock': 'KnockSensor',
-        'o2': 'OxygenSensor',
-        'egt': 'ExhaustGasTemp',
-        'baro': 'BarometricPressure',
-        'vss': 'VehicleSpeed',
-        'gear': 'GearPosition',
-        'clutch': 'ClutchPosition',
-        'brake': 'BrakePressure',
-        'acc_ped': 'AcceleratorPedal',
-        'turbo': 'TurbochargerSpeed',
-        'wastegate': 'WastegatePosition',
-        'intercooler': 'IntercoolerTemp',
-        'dpf': 'DieselParticulateFilter',
-        'egr': 'ExhaustGasRecirculation'
+        'gear': 'GearPosition'
     }
     
     # Convert to lowercase for matching
