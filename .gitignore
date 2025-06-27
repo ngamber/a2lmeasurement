@@ -40,6 +40,7 @@ Thumbs.db
 *.a2l
 *.a2ldb
 *_params.csv
+SCGA05_OEM.a2ldb
 
 # Temporary files
 *.tmp
