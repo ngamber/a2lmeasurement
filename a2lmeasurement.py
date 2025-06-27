@@ -34,12 +34,20 @@ db = DB()
 print("Opening A2l as database")
 
 # Check if database exists, if so open it, otherwise try to import A2L file
-if path.exists(f"{argv[1]}.a2ldb"):
+# Replace .a2l extension with .a2ldb, or add .a2ldb if no extension
+if argv[1].endswith('.a2l'):
+    a2ldb_file = argv[1][:-4] + '.a2ldb'
+else:
+    a2ldb_file = f"{argv[1]}.a2ldb"
+if path.exists(a2ldb_file):
+    print(f"Found existing database file: {a2ldb_file}")
+    # Use open_existing with just the base filename (without .a2ldb extension)
     session = db.open_existing(argv[1])
 elif path.exists(argv[1]):
+    print(f"Creating new database from A2L file: {argv[1]}")
     session = db.import_a2l(argv[1])
 else:
-    print(f"Error: Neither {argv[1]}.a2ldb nor {argv[1]} found")
+    print(f"Error: Neither {a2ldb_file} nor {argv[1]} found")
     sys.exit(1)
 
 print("A2l Opened as database")
