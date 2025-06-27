@@ -11,12 +11,16 @@ from sys import argv
 
 def print_usage():
     print("Usage:")
-    print("  CSV input:        python a2lmeasurement.py <a2l_file> --csv <csv_file>")
-    print("  Individual args:  python a2lmeasurement.py <a2l_file> <param1> [param2:CustomName] [param3] ...")
+    print("  CSV input:        python a2lmeasurement.py <a2l_file> --csv <csv_file> [--debug]")
+    print("  Individual args:  python a2lmeasurement.py <a2l_file> <param1> [param2:CustomName] [param3] ... [--debug]")
+    print("")
+    print("Options:")
+    print("  --debug           Enable debug output to troubleshoot issues")
     print("")
     print("Examples:")
     print("  python a2lmeasurement.py engine.a2l --csv measurements.csv")
     print("  python a2lmeasurement.py engine.a2l RPM MAP:ManifoldPressure LAMBDA")
+    print("  python a2lmeasurement.py engine.a2l TurboSpeed --debug")
 
 if len(argv) < 3:
     print_usage()
@@ -84,21 +88,35 @@ def fix_degree(bad_string):
 
 
 def coefficients_to_equation(coefficients):
-    a, b, c, d, e, f = (
-        str(coefficients["a"]),
-        str(coefficients["b"]),
-        str(coefficients["c"]),
-        str(coefficients["d"]),
-        str(coefficients["e"]),
-        str(coefficients["f"]),
-    )
+    # Handle both dictionary-style and object-style coefficients
+    if hasattr(coefficients, 'a'):
+        # Object-style coefficients (pya2l.model.Coeffs)
+        a, b, c, d, e, f = (
+            str(coefficients.a),
+            str(coefficients.b),
+            str(coefficients.c),
+            str(coefficients.d),
+            str(coefficients.e),
+            str(coefficients.f),
+        )
+    else:
+        # Dictionary-style coefficients
+        a, b, c, d, e, f = (
+            str(coefficients["a"]),
+            str(coefficients["b"]),
+            str(coefficients["c"]),
+            str(coefficients["d"]),
+            str(coefficients["e"]),
+            str(coefficients["f"]),
+        )
+    
     if a == "0.0" and d == "0.0":  # Polynomial is of order 1, ie linear
         return f"(({f} * x) - {c} ) / ({b} - ({e} * x))"
     else:
         return "Cannot handle polynomial ratfunc because we do not know how to invert!"
 
 
-def process_measurement(session, param_name, custom_name=""):
+def process_measurement(session, param_name, custom_name="", debug=False):
     """Process a single measurement and return the output row data"""
     measurement = (
         session.query(model.Measurement)
@@ -111,22 +129,90 @@ def process_measurement(session, param_name, custom_name=""):
         print("******** Could not find ! ", param_name)
         return None
 
+    if debug:
+        print(f"\n=== Debug info for {param_name} ===")
+        print(f"Available attributes: {[attr for attr in dir(measurement) if not attr.startswith('_')]}")
+        
+        # Debug ECU address attributes
+        print(f"ecu_address value: {getattr(measurement, 'ecu_address', 'NOT_FOUND')}")
+        print(f"ecu_address type: {type(getattr(measurement, 'ecu_address', None))}")
+        
+        # Debug conversion method
+        conversion = getattr(measurement, 'conversion', None)
+        if conversion:
+            print(f"Conversion object type: {type(conversion)}")
+            print(f"Conversion attributes: {[attr for attr in dir(conversion) if not attr.startswith('_')]}")
+
     # Access measurement properties directly
     try:
         # Get computation method for unit and coefficients
-        compu_method = getattr(measurement, 'compuMethod', None)
-        if compu_method is None:
-            compu_method = getattr(measurement, 'conversion', None)
+        compu_method = None
+        unit = ""
+        math = "No conversion available"
         
-        if compu_method and hasattr(compu_method, 'coeffs'):
-            math = coefficients_to_equation(compu_method.coeffs)
-            unit = getattr(compu_method, 'unit', "")
-        elif compu_method and hasattr(compu_method, 'coefficients'):
-            math = coefficients_to_equation(compu_method.coefficients)
-            unit = getattr(compu_method, 'unit', "")
-        else:
-            math = "No conversion available"
-            unit = ""
+        # Try multiple attribute names for computation method
+        for attr_name in ['compuMethod', 'conversion', 'compu_method', 'conversionMethod']:
+            compu_method = getattr(measurement, attr_name, None)
+            if compu_method is not None:
+                if debug:
+                    print(f"Found computation method via: {attr_name}")
+                break
+        
+        if compu_method:
+            # If conversion is a string, it's likely a reference to a CompuMethod
+            if isinstance(compu_method, str):
+                if debug:
+                    print(f"Conversion is string reference: {compu_method}")
+                # Try to find the actual CompuMethod object
+                try:
+                    actual_compu_method = (
+                        session.query(model.CompuMethod)
+                        .filter(model.CompuMethod.name == compu_method)
+                        .first()
+                    )
+                    if actual_compu_method:
+                        compu_method = actual_compu_method
+                        if debug:
+                            print(f"Found CompuMethod object: {compu_method.name}")
+                    else:
+                        if debug:
+                            print(f"Could not find CompuMethod: {compu_method}")
+                        compu_method = None
+                except Exception as e:
+                    if debug:
+                        print(f"Error looking up CompuMethod: {e}")
+                    compu_method = None
+            
+            if compu_method and not isinstance(compu_method, str):
+                # Try to get unit
+                for unit_attr in ['unit', 'unitRef', 'physUnit']:
+                    unit = getattr(compu_method, unit_attr, "")
+                    if unit:
+                        if debug:
+                            print(f"Found unit via: {unit_attr} = '{unit}'")
+                        break
+                
+                # Try to get coefficients for equation
+                coeffs = None
+                for coeff_attr in ['coeffs', 'coefficients', 'ratFunc', 'formula']:
+                    coeffs = getattr(compu_method, coeff_attr, None)
+                    if coeffs is not None:
+                        if debug:
+                            print(f"Found coefficients via: {coeff_attr}")
+                            print(f"Coefficients type: {type(coeffs)}")
+                            print(f"Coefficients value: {coeffs}")
+                        break
+                
+                if coeffs:
+                    try:
+                        math = coefficients_to_equation(coeffs)
+                    except Exception as e:
+                        if debug:
+                            print(f"Error processing coefficients: {e}")
+                        math = "Conversion error"
+        
+        if debug:
+            print(f"Unit: '{unit}', Math: '{math}'")
         
         output_row = []
         
@@ -136,8 +222,59 @@ def process_measurement(session, param_name, custom_name=""):
             output_row.append(measurement.name)
         output_row.append(unit)
         output_row.append(math)
-        output_row.append(str(getattr(measurement, 'format', 0)) + "f")
-        output_row.append(str(hex(getattr(measurement, 'ecuAddress', 0))))
+        
+        # Handle format - try to extract clean format string
+        format_val = getattr(measurement, 'format', None)
+        if format_val is not None:
+            if hasattr(format_val, 'formatString'):
+                # Extract format string from format object
+                format_str = getattr(format_val, 'formatString', '%7.0')
+                # Clean up format string - remove % and add f
+                clean_format = format_str.replace('%', '').replace('f', '') + 'f'
+                output_row.append(clean_format)
+            else:
+                # If it's already a string or number
+                output_row.append(str(format_val) + "f")
+        else:
+            output_row.append("0f")
+        
+        # Try multiple attribute names for ECU address
+        ecu_address = 0
+        
+        # First try direct attributes
+        for addr_attr in ['ecuAddress', 'address', 'memoryAddress', 'ecuAddr', 'addr', 'ecu_address']:
+            addr_val = getattr(measurement, addr_attr, None)
+            if addr_val is not None and addr_val != 0:
+                # Handle EcuAddress objects
+                if hasattr(addr_val, 'address'):
+                    ecu_address = addr_val.address
+                    if debug:
+                        print(f"Found ECU address via: {addr_attr}.address = {hex(ecu_address)}")
+                else:
+                    ecu_address = addr_val
+                    if debug:
+                        print(f"Found ECU address via: {addr_attr} = {hex(ecu_address)}")
+                break
+        
+        # If still no address, try to get it from nested objects
+        if ecu_address == 0:
+            for nested_attr in ['ecuAddressExtension', 'memLayout', 'layout', 'ecu_address_extension']:
+                nested_obj = getattr(measurement, nested_attr, None)
+                if nested_obj:
+                    for addr_attr in ['address', 'ecuAddress', 'offset']:
+                        addr_val = getattr(nested_obj, addr_attr, None)
+                        if addr_val is not None and addr_val != 0:
+                            if hasattr(addr_val, 'address'):
+                                ecu_address = addr_val.address
+                            else:
+                                ecu_address = addr_val
+                            if debug:
+                                print(f"Found ECU address via: {nested_attr}.{addr_attr} = {hex(ecu_address)}")
+                            break
+                    if ecu_address != 0:
+                        break
+        
+        output_row.append(str(hex(ecu_address)))
         
         # Get datatype and determine size
         datatype = getattr(measurement, 'datatype', 'UWORD')
@@ -161,14 +298,21 @@ def process_measurement(session, param_name, custom_name=""):
         output_row.append("")
         output_row.append("")
 
+        if debug:
+            print(f"Final output row: {output_row}")
+            print("=== End debug info ===\n")
+
         return output_row
         
     except Exception as e:
         print(f"Error processing measurement {param_name}: {e}")
+        if debug:
+            import traceback
+            traceback.print_exc()
         return None
 
 
-def process_csv_input(session, csv_file):
+def process_csv_input(session, csv_file, debug=False):
     """Process measurements from CSV file"""
     measurements = []
     
@@ -178,18 +322,22 @@ def process_csv_input(session, csv_file):
             param_name = row["Param Name"]
             custom_name = row["Custom Name"]
             
-            output_row = process_measurement(session, param_name, custom_name)
+            output_row = process_measurement(session, param_name, custom_name, debug)
             if output_row is not None:
                 measurements.append(output_row)
     
     return measurements
 
 
-def process_individual_args(session, param_args):
+def process_individual_args(session, param_args, debug=False):
     """Process measurements from individual command line arguments"""
     measurements = []
     
     for param_spec in param_args:
+        # Skip debug flag if it appears in arguments
+        if param_spec == '--debug':
+            continue
+            
         # Split on colon to separate param name from custom name
         if ':' in param_spec:
             param_name, custom_name = param_spec.split(':', 1)
@@ -197,7 +345,7 @@ def process_individual_args(session, param_args):
             param_name = param_spec
             custom_name = ""
         
-        output_row = process_measurement(session, param_name, custom_name)
+        output_row = process_measurement(session, param_name, custom_name, debug)
         if output_row is not None:
             measurements.append(output_row)
     
@@ -205,6 +353,9 @@ def process_individual_args(session, param_args):
 
 
 # Begin - Main processing logic
+
+# Check for debug flag
+debug_mode = '--debug' in argv
 
 output_csv = []
 output_csv.append(",".join(header))
@@ -217,11 +368,15 @@ if len(argv) >= 3 and argv[2] == "--csv":
         sys.exit(1)
     
     print("Processing measurements from CSV file:", argv[3])
-    measurements = process_csv_input(session, argv[3])
+    if debug_mode:
+        print("Debug mode enabled")
+    measurements = process_csv_input(session, argv[3], debug_mode)
 else:
     print("Processing measurements from command line arguments")
+    if debug_mode:
+        print("Debug mode enabled")
     param_args = argv[2:]  # All arguments after the A2L file
-    measurements = process_individual_args(session, param_args)
+    measurements = process_individual_args(session, param_args, debug_mode)
 
 # Convert measurements to CSV format
 for measurement in measurements:
