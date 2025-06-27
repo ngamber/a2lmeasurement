@@ -4,8 +4,10 @@ This script processes A2L measurement data and converts it to CSV format for use
 
 ## Features
 
-- **Dual Input Methods**: Accept measurements from CSV files or command line arguments
+- **Multiple Input Methods**: Accept measurements from CSV files, command line arguments, or ECU addresses
+- **ECU Address Lookup**: Find measurements by their ECU memory address with automatic name generation
 - **Custom Names**: Support for custom parameter names using colon separator
+- **Human-Readable Names**: Automatic generation of readable names from technical parameter names
 - **Backward Compatibility**: Existing CSV workflows continue to work unchanged
 - **Error Handling**: Robust error handling with clear feedback
 
@@ -23,26 +25,48 @@ The script requires the `pya2l` library. A virtual environment has been set up w
 ### Method 1: Individual Arguments (New)
 
 ```bash
-# Using the wrapper script (recommended)
-./run_a2lmeasurement.sh engine.a2l RPM MAP LAMBDA
+# Using the wrapper script (recommended) - use database name without extension if .a2ldb exists
+./run_a2lmeasurement.sh SCGA05_OEM n_tcha Air_tIn_VW tps
 
 # With custom names using colon separator
-./run_a2lmeasurement.sh engine.a2l RPM MAP:ManifoldPressure LAMBDA:AirFuelRatio
+./run_a2lmeasurement.sh SCGA05_OEM n_tcha:TurboSpeed Air_tIn_VW:IntakeTemp tps:ThrottlePosition
 
 # Direct python execution (requires virtual environment activation)
 source venv/bin/activate
-python a2lmeasurement.py engine.a2l RPM MAP:ManifoldPressure LAMBDA
+python a2lmeasurement.py SCGA05_OEM n_tcha:TurboSpeed Air_tIn_VW:IntakeTemp tps
 ```
 
-### Method 2: CSV Input (Original)
+### Method 2: ECU Address Lookup (New)
+
+```bash
+# Look up measurements by ECU memory address
+./run_a2lmeasurement.sh SCGA05_OEM --addr 0xb0009908
+
+# With custom names
+./run_a2lmeasurement.sh SCGA05_OEM --addr 0xb0009908:"Lambda"
+
+# Multiple addresses
+./run_a2lmeasurement.sh SCGA05_OEM --addr 0xb0009908:"Lambda" 0x12345678:"Another Param"
+
+# Mix of addresses with and without custom names
+./run_a2lmeasurement.sh SCGA05_OEM --addr 0xb0009908:"Lambda" 0x87654321
+```
+
+**ECU Address Format:**
+- Addresses must be in hexadecimal format: `0x1234ABCD`
+- Custom names are optional and specified with colon separator: `0xADDRESS:CustomName`
+- If no custom name is provided, a human-readable name is automatically generated
+- The script searches the A2L database to find the measurement at the specified address
+
+### Method 3: CSV Input (Original)
 
 ```bash
 # Using the wrapper script
-./run_a2lmeasurement.sh engine.a2l --csv measurements.csv
+./run_a2lmeasurement.sh SCGA05_OEM.a2l --csv measurements.csv
 
 # Direct python execution
 source venv/bin/activate
-python a2lmeasurement.py engine.a2l --csv measurements.csv
+python a2lmeasurement.py SCGA05_OEM.a2l --csv measurements.csv
 ```
 
 ## CSV Input Format
@@ -59,14 +83,17 @@ The script generates a CSV file named `<a2l_file>_params.csv` with the following
 ## Examples
 
 ```bash
-# Process specific measurements
-./run_a2lmeasurement.sh my_ecu.a2l RPM LOAD TIMING
+# Process specific measurements from SCGA05_OEM database
+./run_a2lmeasurement.sh SCGA05_OEM.a2l n_tcha Air_tIn_VW gear
 
 # Process with custom names
-./run_a2lmeasurement.sh my_ecu.a2l RPM:EngineRPM LOAD:EngineLoad TIMING:IgnitionTiming
+./run_a2lmeasurement.sh SCGA05_OEM.a2l n_tcha:TurboSpeed Air_tIn_VW:IntakeTemp gear:GearPosition
 
 # Process from CSV file
-./run_a2lmeasurement.sh my_ecu.a2l --csv my_measurements.csv
+./run_a2lmeasurement.sh SCGA05_OEM.a2l --csv measurements.csv
+
+# Process using ECU addresses
+./run_a2lmeasurement.sh SCGA05_OEM.a2l --addr 0xb0009908:Lambda
 ```
 
 ## Changes Made
