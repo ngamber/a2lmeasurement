@@ -13,14 +13,18 @@ def print_usage():
     print("Usage:")
     print("  CSV input:        python a2lmeasurement.py <a2l_file> --csv <csv_file> [--debug]")
     print("  Individual args:  python a2lmeasurement.py <a2l_file> <param1> [param2:CustomName] [param3] ... [--debug]")
+    print("  Address lookup:   python a2lmeasurement.py <a2l_file> --addr <address1> [address2:CustomName] ... [--debug]")
     print("")
     print("Options:")
     print("  --debug           Enable debug output to troubleshoot issues")
+    print("  --addr            Look up measurements by ECU address (hex format: 0x1234ABCD)")
     print("")
     print("Examples:")
     print("  python a2lmeasurement.py engine.a2l --csv measurements.csv")
     print("  python a2lmeasurement.py engine.a2l RPM MAP:ManifoldPressure LAMBDA")
-    print("  python a2lmeasurement.py engine.a2l TurboSpeed --debug")
+    print("  python a2lmeasurement.py engine.a2l n_tcha:TurboSpeed --debug")
+    print("  python a2lmeasurement.py engine.a2l --addr 0xb00095fc:TurboSpeed")
+    print("  python a2lmeasurement.py engine.a2l --addr 0x12345678 0xABCDEF00:CustomName")
 
 if len(argv) < 3:
     print_usage()
@@ -352,6 +356,137 @@ def process_individual_args(session, param_args, debug=False):
     return measurements
 
 
+def find_measurement_by_address(session, target_address, debug=False):
+    """Find a measurement by its ECU address"""
+    if debug:
+        print(f"Searching for measurement at address: {hex(target_address)}")
+    
+    # Query all measurements and check their addresses
+    measurements = session.query(model.Measurement).all()
+    
+    for measurement in measurements:
+        # Try to get ECU address from the measurement
+        for addr_attr in ['ecu_address', 'ecuAddress', 'address']:
+            addr_val = getattr(measurement, addr_attr, None)
+            if addr_val is not None:
+                # Handle EcuAddress objects
+                if hasattr(addr_val, 'address'):
+                    ecu_address = addr_val.address
+                else:
+                    ecu_address = addr_val
+                
+                if ecu_address == target_address:
+                    if debug:
+                        print(f"Found measurement: {measurement.name} at address {hex(ecu_address)}")
+                    return measurement.name
+    
+    if debug:
+        print(f"No measurement found at address {hex(target_address)}")
+    return None
+
+
+def generate_human_readable_name(param_name):
+    """Convert technical parameter names to human-readable names"""
+    # Common automotive parameter name mappings
+    name_mappings = {
+        'n_tcha': 'TurboSpeed',
+        'n_mot': 'EngineRPM',
+        'n_eng': 'EngineRPM',
+        'rpm': 'EngineRPM',
+        'p_map': 'ManifoldPressure',
+        'p_boost': 'BoostPressure',
+        'p_rail': 'FuelRailPressure',
+        't_air': 'IntakeAirTemp',
+        't_cool': 'CoolantTemp',
+        't_oil': 'OilTemp',
+        't_exh': 'ExhaustTemp',
+        'lambda': 'AirFuelRatio',
+        'afr': 'AirFuelRatio',
+        'maf': 'MassAirFlow',
+        'map': 'ManifoldPressure',
+        'tps': 'ThrottlePosition',
+        'ign_adv': 'IgnitionAdvance',
+        'timing': 'IgnitionTiming',
+        'inj_time': 'InjectorPulseWidth',
+        'fuel_flow': 'FuelFlow',
+        'boost': 'BoostPressure',
+        'vvt': 'VariableValveTiming',
+        'knock': 'KnockSensor',
+        'o2': 'OxygenSensor',
+        'egt': 'ExhaustGasTemp',
+        'baro': 'BarometricPressure',
+        'vss': 'VehicleSpeed',
+        'gear': 'GearPosition',
+        'clutch': 'ClutchPosition',
+        'brake': 'BrakePressure',
+        'acc_ped': 'AcceleratorPedal',
+        'turbo': 'TurbochargerSpeed',
+        'wastegate': 'WastegatePosition',
+        'intercooler': 'IntercoolerTemp',
+        'dpf': 'DieselParticulateFilter',
+        'egr': 'ExhaustGasRecirculation'
+    }
+    
+    # Convert to lowercase for matching
+    param_lower = param_name.lower()
+    
+    # Check for exact matches first
+    if param_lower in name_mappings:
+        return name_mappings[param_lower]
+    
+    # Check for partial matches
+    for key, readable_name in name_mappings.items():
+        if key in param_lower or param_lower in key:
+            return readable_name
+    
+    # If no match found, try to make it more readable by capitalizing and removing underscores
+    readable = param_name.replace('_', ' ').title()
+    return readable
+
+
+def process_address_args(session, addr_args, debug=False):
+    """Process measurements from ECU address arguments"""
+    measurements = []
+    
+    for addr_spec in addr_args:
+        # Skip debug flag if it appears in arguments
+        if addr_spec == '--debug':
+            continue
+            
+        # Split on colon to separate address from custom name
+        if ':' in addr_spec:
+            addr_str, custom_name = addr_spec.split(':', 1)
+        else:
+            addr_str = addr_spec
+            custom_name = ""
+        
+        # Parse the address (handle both hex and decimal)
+        try:
+            if addr_str.startswith('0x') or addr_str.startswith('0X'):
+                target_address = int(addr_str, 16)
+            else:
+                target_address = int(addr_str)
+        except ValueError:
+            print(f"Error: Invalid address format: {addr_str}")
+            continue
+        
+        # Find the measurement by address
+        param_name = find_measurement_by_address(session, target_address, debug)
+        
+        if param_name:
+            # If no custom name provided, generate a human-readable one
+            if not custom_name:
+                custom_name = generate_human_readable_name(param_name)
+            
+            output_row = process_measurement(session, param_name, custom_name, debug)
+            if output_row is not None:
+                measurements.append(output_row)
+        else:
+            print(f"******** Could not find measurement at address {hex(target_address)}")
+    
+    return measurements
+
+
 # Begin - Main processing logic
 
 # Check for debug flag
@@ -371,6 +506,17 @@ if len(argv) >= 3 and argv[2] == "--csv":
     if debug_mode:
         print("Debug mode enabled")
     measurements = process_csv_input(session, argv[3], debug_mode)
+elif len(argv) >= 3 and argv[2] == "--addr":
+    if len(argv) < 4:
+        print("Error: --addr option requires at least one address argument")
+        print_usage()
+        sys.exit(1)
+    
+    print("Processing measurements from ECU addresses")
+    if debug_mode:
+        print("Debug mode enabled")
+    addr_args = argv[3:]  # All arguments after --addr
+    measurements = process_address_args(session, addr_args, debug_mode)
 else:
     print("Processing measurements from command line arguments")
     if debug_mode:
